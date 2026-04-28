@@ -13,22 +13,23 @@ const startServer = async () => {
     console.log(`🚀 Server running in ${env.NODE_ENV} mode on port ${env.PORT}`);
 
     // ── Keep-Alive Self-Ping (prevents Render free-tier cold starts) ──
-    // Render spins down free services after 15 min of inactivity.
-    // This pings /health every 14 minutes to keep the instance warm.
     if (env.NODE_ENV === 'production') {
-      const KEEP_ALIVE_URL = process.env.RENDER_EXTERNAL_URL 
-        ? `${process.env.RENDER_EXTERNAL_URL}/health`
-        : `https://routecopilot-backend.onrender.com/health`;
+      // Priority: 1. Render provided URL, 2. Hardcoded fallback
+      const baseUrl = process.env.RENDER_EXTERNAL_URL || 'https://routecopilot-backend.onrender.com';
+      const KEEP_ALIVE_URL = `${baseUrl}/health`;
       
-      const keepAlive = () => {
-        fetch(KEEP_ALIVE_URL)
-          .then(res => console.log(`[KeepAlive] Ping OK: ${res.status}`))
-          .catch(err => console.warn(`[KeepAlive] Ping failed:`, err.message));
+      const keepAlive = async () => {
+        try {
+          const res = await fetch(KEEP_ALIVE_URL);
+          console.log(`[${new Date().toLocaleTimeString()}] ⚡ Keep-Alive: Pinged ${KEEP_ALIVE_URL} - Status: ${res.status}`);
+        } catch (err) {
+          console.warn(`[${new Date().toLocaleTimeString()}] ⚠️ Keep-Alive: Ping failed`, err.message);
+        }
       };
       
-      // Ping every 14 minutes (840000ms)
+      // Ping every 14 minutes to stay within Render's 15-min sleep window
       setInterval(keepAlive, 14 * 60 * 1000);
-      console.log(`🏓 Keep-alive ping enabled → ${KEEP_ALIVE_URL} every 14min`);
+      console.log(`🏓 Keep-alive system active → Pinging every 14min`);
     }
   });
 
