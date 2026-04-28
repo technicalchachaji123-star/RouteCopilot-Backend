@@ -180,12 +180,14 @@ function generateTolls(routeDist: number, multiplier: number = 1.0): TollPlaza[]
   const tolls: TollPlaza[] = [];
   for (let i = 0; i < numTolls; i++) {
     const name = TOLL_PLAZA_NAMES[Math.floor(Math.random() * TOLL_PLAZA_NAMES.length)];
+    // Approximate progress along the route for better visual distribution
+    const progress = (i + 1) / (numTolls + 1);
     tolls.push({
       name,
-      lat: 0,
+      lat: 0, // Frontend handles placement via geometry, but we keep this for schema
       lon: 0,
       cost: Math.round((Math.floor(Math.random() * 50) + 80) * multiplier),
-      distanceFromStartKm: (i + 1) * 100
+      distanceFromStartKm: Math.round(routeDist * progress)
     });
   }
   return tolls;
@@ -241,9 +243,10 @@ export class RouteEngine {
     const highways = pickHighways(originCity, destCity);
 
     // Generate 5 route variants
+    const timestamp = Date.now();
     const baseRoutes = [
       { 
-        id: 'r1', 
+        id: `r1_${timestamp}`, 
         name: `${highways[0]} (${originCity} → ${destCity} Expressway)`, 
         dist: realDistanceKm, 
         dur: realDurationMins, 
@@ -254,7 +257,7 @@ export class RouteEngine {
         waypoints: waypointCoords
       },
       { 
-        id: 'r2', 
+        id: `r2_${timestamp}`, 
         name: `${highways[1]} (${originCity} → ${destCity} Highway)`, 
         dist: Math.round(realDistanceKm * 1.05),
         dur: Math.round(realDurationMins * 1.1),
@@ -265,7 +268,7 @@ export class RouteEngine {
         waypoints: waypointCoords
       },
       { 
-        id: 'r3', 
+        id: `r3_${timestamp}`, 
         name: `${highways[2]} (${originCity} Rural Route)`, 
         dist: Math.round(realDistanceKm * 1.2),
         dur: Math.round(realDurationMins * 1.4),
@@ -276,7 +279,7 @@ export class RouteEngine {
         waypoints: waypointCoords
       },
       { 
-        id: 'r4', 
+        id: `r4_${timestamp}`, 
         name: `${highways[3] || 'NH-27'} (${originCity} → ${destCity} Coastal Route)`, 
         dist: Math.round(realDistanceKm * 1.1),
         dur: Math.round(realDurationMins * 1.15),
@@ -287,7 +290,7 @@ export class RouteEngine {
         waypoints: waypointCoords
       },
       { 
-        id: 'r5', 
+        id: `r5_${timestamp}`, 
         name: `${highways[4] || 'NH-30'} (${originCity} State Highway Alternate)`, 
         dist: Math.round(realDistanceKm * 1.08),
         dur: Math.round(realDurationMins * 1.25),
