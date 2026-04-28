@@ -66,51 +66,95 @@ export interface RouteOption {
   alerts?: any[];
 }
 
-// Geocode a place name to lat/lng using Nominatim
-async function geocode(place: string): Promise<{lat: number, lon: number} | null> {
+// Utility: delay for rate limiting
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Utility: fetch with timeout
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = 10000): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(place)}&limit=1&countrycodes=in`;
-    const res = await fetch(url, { headers: { 'User-Agent': 'RouteCopilotAI/1.0' } });
-    const data = await res.json();
-    if (data && data.length > 0) {
-      return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
-    }
-    return null;
-  } catch (err: any) {
-    console.error(`Geocode error for "${place}":`, err.message);
-    return null;
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    return response;
+  } finally {
+    clearTimeout(id);
   }
 }
 
-// Get real driving distance/duration from OSRM free API with geometries
-async function getOSRMRoute(originCoord: {lat: number, lon: number}, destCoord: {lat: number, lon: number}, waypointCoords?: {lat: number, lon: number}[]): Promise<{distanceKm: number, durationMins: number, routeName: string, geometry: string} | null> {
-  try {
-    // Build coordinate string: origin;wp1;wp2;...;destination
-    let coordStr = `${originCoord.lon},${originCoord.lat}`;
-    if (waypointCoords && waypointCoords.length > 0) {
-      for (const wp of waypointCoords) {
-        coordStr += `;${wp.lon},${wp.lat}`;
+// Geocode a place name to lat/lng using Nominatim (with retry + backoff)
+async function geocode(place: string): Promise<{lat: number, lon: number} | null> {
+  const MAX_RETRIES = 3;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      // Respect Nominatim's 1 req/sec rate limit
+      if (attempt > 1) await delay(1500 * attempt);
+      
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(place)}&limit=1&countrycodes=in`;
+      const res = await fetchWithTimeout(url, { headers: { 'User-Agent': 'RouteCopilotAI/1.0 (logistics-prototype)' } }, 8000);
+      
+      if (res.status === 429) {
+        console.warn(`Nominatim rate limited (attempt ${attempt}/${MAX_RETRIES}), retrying...`);
+        await delay(2000 * attempt);
+        continue;
       }
+      
+      const data = await res.json();
+      if (data && data.length > 0) {
+        return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+      }
+      return null;
+    } catch (err: any) {
+      console.error(`Geocode attempt ${attempt}/${MAX_RETRIES} for "${place}":`, err.message);
+      if (attempt === MAX_RETRIES) return null;
+      await delay(1000 * attempt);
     }
-    coordStr += `;${destCoord.lon},${destCoord.lat}`;
-    
-    const url = `https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=polyline`;
-    const res = await fetch(url, { headers: { 'User-Agent': 'RouteCopilotAI/1.0' } });
-    const data = await res.json();
-    if (data && data.routes && data.routes.length > 0) {
-      const route = data.routes[0];
-      return {
-        distanceKm: Math.round(route.distance / 1000),
-        durationMins: Math.round(route.duration / 60),
-        routeName: data.waypoints?.map((w: any) => w.name).filter((n: string) => n).join(' → ') || '',
-        geometry: route.geometry
-      };
-    }
-    return null;
-  } catch (err: any) {
-    console.error(`OSRM error:`, err.message);
-    return null;
   }
+  return null;
+}
+
+// Get real driving distance/duration from OSRM free API with geometries (with retry)
+async function getOSRMRoute(originCoord: {lat: number, lon: number}, destCoord: {lat: number, lon: number}, waypointCoords?: {lat: number, lon: number}[]): Promise<{distanceKm: number, durationMins: number, routeName: string, geometry: string} | null> {
+  const MAX_RETRIES = 3;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      // Build coordinate string: origin;wp1;wp2;...;destination
+      let coordStr = `${originCoord.lon},${originCoord.lat}`;
+      if (waypointCoords && waypointCoords.length > 0) {
+        for (const wp of waypointCoords) {
+          coordStr += `;${wp.lon},${wp.lat}`;
+        }
+      }
+      coordStr += `;${destCoord.lon},${destCoord.lat}`;
+      
+      const url = `https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=polyline`;
+      const res = await fetchWithTimeout(url, { headers: { 'User-Agent': 'RouteCopilotAI/1.0' } }, 12000);
+      
+      if (!res.ok) {
+        console.warn(`OSRM returned ${res.status} (attempt ${attempt}/${MAX_RETRIES})`);
+        if (attempt < MAX_RETRIES) { await delay(1500 * attempt); continue; }
+        return null;
+      }
+      
+      const data = await res.json();
+      if (data && data.routes && data.routes.length > 0) {
+        const route = data.routes[0];
+        return {
+          distanceKm: Math.round(route.distance / 1000),
+          durationMins: Math.round(route.duration / 60),
+          routeName: data.waypoints?.map((w: any) => w.name).filter((n: string) => n).join(' → ') || '',
+          geometry: route.geometry
+        };
+      }
+      return null;
+    } catch (err: any) {
+      console.error(`OSRM attempt ${attempt}/${MAX_RETRIES}:`, err.message);
+      if (attempt === MAX_RETRIES) return null;
+      await delay(1500 * attempt);
+    }
+  }
+  return null;
 }
 
 // Haversine distance as fallback
@@ -221,6 +265,8 @@ export class RouteEngine {
     const destCity = destination.split(',')[0].trim();
 
     const originCoord = params.originCoord || await geocode(origin);
+    // Delay between geocode calls to respect Nominatim 1 req/sec rate limit
+    if (!params.originCoord) await delay(1100);
     const destCoord = params.destCoord || await geocode(destination);
 
     if (!originCoord || !destCoord) {
@@ -231,6 +277,7 @@ export class RouteEngine {
     let waypointCoords: {lat: number, lon: number}[] = [];
     if (waypoints && waypoints.length > 0) {
       for (const wp of waypoints) {
+        await delay(1100); // Rate limit between each waypoint geocode
         const coord = await geocode(wp);
         if (coord) waypointCoords.push(coord);
       }
