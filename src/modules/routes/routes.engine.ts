@@ -21,6 +21,8 @@ export interface RouteRequestParams {
   isNightTime?: boolean;
   simulatedFuelPrice?: number;
   simulatedWeatherIntensity?: number;
+  originCoord?: { lat: number; lon: number };
+  destCoord?: { lat: number; lon: number };
 }
 
 export interface RiskBreakdown {
@@ -218,8 +220,12 @@ export class RouteEngine {
     const originCity = origin.split(',')[0].trim();
     const destCity = destination.split(',')[0].trim();
 
-    const originCoord = await geocode(origin) || {lat: 28.6139, lon: 77.2090};
-    const destCoord = await geocode(destination) || {lat: 19.0760, lon: 72.8777};
+    const originCoord = params.originCoord || await geocode(origin);
+    const destCoord = params.destCoord || await geocode(destination);
+
+    if (!originCoord || !destCoord) {
+      throw new Error(`AI Engine failed to locate ${!originCoord ? 'Origin' : 'Destination'}. Please be more specific or use the map picker.`);
+    }
 
     // Geocode waypoints if provided
     let waypointCoords: {lat: number, lon: number}[] = [];
