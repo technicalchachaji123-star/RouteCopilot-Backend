@@ -265,8 +265,8 @@ export class RouteEngine {
     const destCity = destination.split(',')[0].trim();
 
     const originCoord = params.originCoord || await geocode(origin);
-    // Delay between geocode calls to respect Nominatim 1 req/sec rate limit
-    if (!params.originCoord) await delay(1100);
+    // Reduced delay for faster performance
+    if (!params.originCoord) await delay(600);
     const destCoord = params.destCoord || await geocode(destination);
 
     if (!originCoord || !destCoord) {
@@ -277,7 +277,7 @@ export class RouteEngine {
     let waypointCoords: {lat: number, lon: number}[] = [];
     if (waypoints && waypoints.length > 0) {
       for (const wp of waypoints) {
-        await delay(1100); // Rate limit between each waypoint geocode
+        await delay(600); // Reduced rate limit between each waypoint geocode
         const coord = await geocode(wp);
         if (coord) waypointCoords.push(coord);
       }
